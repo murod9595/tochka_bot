@@ -96,7 +96,7 @@ class OptimizedBot:
                 df['time'] = pd.to_datetime(df['time'], unit='ms')
                 return df
             except:
-                continue        return None
+           return None
     
     def analyze(self, symbol):
         df = self.get_data(symbol)
