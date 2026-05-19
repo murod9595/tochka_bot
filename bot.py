@@ -19,7 +19,6 @@ class CryptoSignalBot:
         self.exchange = ccxt.binance()
         
     def get_data(self, symbol, timeframe='4h', limit=100):
-        """Binance dan ma'lumot olish"""
         try:
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
@@ -30,42 +29,30 @@ class CryptoSignalBot:
             return None
     
     def calculate_indicators(self, df):
-        """Texnik indikatorlar"""
-        # RSI
         df['rsi'] = ta.rsi(df['close'], length=14)
-        
-        # EMA
         df['ema_7'] = ta.ema(df['close'], length=7)
         df['ema_25'] = ta.ema(df['close'], length=25)
-        
-        # MACD
         macd = ta.macd(df['close'])
         df['macd'] = macd['MACD_12_26_9']
         df['macd_signal'] = macd['MACDs_12_26_9']
-        
-        # Volume MA
         df['vol_ma'] = ta.sma(df['volume'], length=20)
-        
         return df
-        def generate_signal(self, df):
-        """Signal yaratish"""
+    
+    def generate_signal(self, df):
         last = df.iloc[-1]
         prev = df.iloc[-2]
         
         signal = "HOLD"
         strength = 0
         
-        # RSI Signals
         if last['rsi'] < 30:
             strength += 2
-        elif last['rsi'] < 40:
-            strength += 1
+        elif last['rsi'] < 40:            strength += 1
         elif last['rsi'] > 70:
             strength -= 2
         elif last['rsi'] > 60:
             strength -= 1
         
-        # EMA Crossover
         if prev['ema_7'] <= prev['ema_25'] and last['ema_7'] > last['ema_25']:
             strength += 2
         elif prev['ema_7'] >= prev['ema_25'] and last['ema_7'] < last['ema_25']:
@@ -75,11 +62,9 @@ class CryptoSignalBot:
         else:
             strength -= 1
         
-        # Volume Confirmation
         if last['volume'] > last['vol_ma'] * 1.5:
             strength += 1 if strength > 0 else -1
         
-        # Final Signal
         if strength >= 3:
             signal = "🟢 STRONG BUY"
         elif strength == 2:
@@ -94,9 +79,9 @@ class CryptoSignalBot:
         return signal, strength
     
     def calculate_sl_tp(self, price, signal_type):
-        """Stop Loss va Take Profit"""
         if "BUY" in signal_type:
-            sl = price * 0.97            tp1 = price * 1.03
+            sl = price * 0.97
+            tp1 = price * 1.03
             tp2 = price * 1.06
             tp3 = price * 1.10
         else:
@@ -104,26 +89,21 @@ class CryptoSignalBot:
             tp1 = price * 0.97
             tp2 = price * 0.94
             tp3 = price * 0.90
-        
         return sl, tp1, tp2, tp3
     
     def send_message(self, text):
-        """Telegram ga xabar yuborish"""
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
             requests.post(url, json={
                 "chat_id": CHAT_ID,
-                "text": text,
-                "parse_mode": "HTML"
+                "text": text,                "parse_mode": "HTML"
             })
             print("✅ Xabar yuborildi")
         except Exception as e:
             print(f"❌ Xabar yuborilmadi: {e}")
     
     def analyze_coin(self, symbol):
-        """Bitta coin tahlili"""
         print(f"📊 {symbol} tahlil qilinmoqda...")
-        
         df = self.get_data(symbol)
         if df is None:
             return False
@@ -146,6 +126,7 @@ class CryptoSignalBot:
 🔸 TP1: ${tp1:.4f}
 🔸 TP2: ${tp2:.4f}
 🔸 TP3: ${tp3:.4f}
+
 ⏰ {datetime.now().strftime('%H:%M:%S')}
         """
         
@@ -155,37 +136,23 @@ class CryptoSignalBot:
         return False
     
     def run(self):
-        """Botni ishga tushirish"""
-        coins = [
-            "BTC/USDT",
-            "ETH/USDT",
-            "BNB/USDT",
-            "SOL/USDT",
-            "XRP/USDT"
-        ]
-        
+        coins = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT"]
         print("🚀 Crypto Signal Bot ishga tushdi...")
-        self.send_message("<b>🚀 Crypto Signal Bot ishga tushdi!</b>")
+        self.send_message("<b>🚀 Bot ishga tushdi!</b>")
         
         while True:
             try:
                 print(f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 signals_count = 0
-                
                 for coin in coins:
-                    if self.analyze_coin(coin):
-                        signals_count += 1
+                    if self.analyze_coin(coin):                        signals_count += 1
                     time.sleep(2)
-                
-                print(f"📊 Jami signallar: {signals_count}")
-                print("⏳ Keyingi tekshiruv 1 soatdan keyin...")
+                print(f"📊 Signallar: {signals_count}")
                 time.sleep(3600)
-                
             except Exception as e:
                 print(f"❌ Xatolik: {e}")
                 time.sleep(60)
 
-# Botni ishga tushirish
 if __name__ == "__main__":
     bot = CryptoSignalBot()
     bot.run()
