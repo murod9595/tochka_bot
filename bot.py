@@ -9,170 +9,87 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-class AdvancedCryptoBot:
+class CryptoBot:
     def __init__(self):
-        self.exchanges = {
-            'binance': ccxt.binance({'options': {'defaultType': 'future'}}),
-            'bybit': ccxt.bybit({'options': {'defaultType': 'future'}}),
-        }
+        self.exchange = ccxt.binance({'options': {'defaultType': 'future'}})
         self.leverage = int(os.getenv('LEVERAGE', 15))
-        self.all_coins = [
-            "BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT",
-            "ADA/USDT", "DOGE/USDT", "MATIC/USDT", "DOT/USDT", "AVAX/USDT",
-            "ONDO/USDT", "ARB/USDT", "OP/USDT", "SUI/USDT", "APT/USDT",
-            "PEPE/USDT", "FLOKI/USDT", "SHIB/USDT", "WIF/USDT", "BONK/USDT",
-        ]
+        self.coins = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT"]
     
     def get_data(self, symbol):
-        for name, exchange in self.exchanges.items():
-            try:
-                ohlcv = exchange.fetch_ohlcv(symbol, '15m', limit=100)
-                df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-                df['time'] = pd.to_datetime(df['time'], unit='ms')
-                return df
-            except:
-                continue
-        return None
+        ohlcv = self.exchange.fetch_ohlcv(symbol, '15m', limit=50)
+        df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+        return df
     
-    def analyze_coin(self, symbol):
+    def analyze(self, symbol):
         df = self.get_data(symbol)
-        if df is None:
-            return None
         
-        if len(df) < 50:
-            return None
-        
-        # Indicators
+        # RSI
         df['rsi'] = ta.rsi(df['close'], length=14)
-        df['ema_7'] = ta.ema(df['close'], length=7)
-        df['ema_25'] = ta.ema(df['close'], length=25)
-        df['ema_99'] = ta.ema(df['close'], length=99)
-        macd = ta.macd(df['close'])        df['macd'] = macd['MACD_12_26_9']
-        df['macd_signal'] = macd['MACDs_12_26_9']
-        df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
         
-        # Volatility
-        returns = df['close'].pct_change()
-        volatility = returns.std() * 100
-        
-        if volatility < 5:
-            return None
-        
-        # Volume
-        avg_vol = df['volume'].tail(20).mean()
-        current_vol = df['volume'].iloc[-1]
-        vol_ratio = current_vol / avg_vol if avg_vol > 0 else 0
+        # EMA
+        df['ema7'] = ta.ema(df['close'], length=7)
+        df['ema25'] = ta.ema(df['close'], length=25)
         
         last = df.iloc[-1]
         price = last['close']
+        rsi = last['rsi']
         
         # Signal
-        score = 0
-        
-        if last['rsi'] < 30:
-            score += 25
-        elif last['rsi'] > 70:
-            score -= 25
-        
-        if last['ema_7'] > last['ema_25'] > last['ema_99']:
-            score += 30
-        elif last['ema_7'] < last['ema_25'] < last['ema_99']:
-            score -= 30
-        
-        if last['macd'] > last['macd_signal']:
-            score += 20
-        else:
-            score -= 20
-        
-        if vol_ratio > 2:
-            score += 20
-        
-        if score >= 50:
-            signal = "🟢 BUY"
-            direction = "LONG"
-            tp1 = price * 1.03
-            tp2 = price * 1.06
-            tp3 = price * 1.10
-            sl = price - (last['atr'] * 2)
-            entry_low = price * 0.985
-            entry_high = price * 0.995
-        elif score <= -50:            signal = "🔴 SELL"
-            direction = "SHORT"
-            tp1 = price * 0.97
-            tp2 = price * 0.94
-            tp3 = price * 0.90
-            sl = price + (last['atr'] * 2)
-            entry_low = price * 1.005
-            entry_high = price * 1.015
+        if rsi < 30 and last['ema7'] > last['ema25']:
+            signal = "BUY"
+            tp = price * 1.05
+            sl = price * 0.97
+            entry = price * 0.99
+        elif rsi > 70 and last['ema7'] < last['ema25']:
+            signal = "SELL"
+            tp = price * 0.95
+            sl = price * 1.03
+            entry = price * 1.01
         else:
             return None
         
-        trailing_5 = price * 0.95 if "BUY" in signal else price * 1.05
-        
         return {
-            'symbol': symbol,
+            'coin': symbol,
             'signal': signal,
-            'direction': direction,
             'price': price,
-            'entry_low': entry_low,
-            'entry_high': entry_high,
-            'tp1': tp1,
-            'tp2': tp2,
-            'tp3': tp3,
-            'sl': sl,
-            'trailing_5': trailing_5,
-            'leverage': self.leverage,
-            'volatility': volatility,
-            'rsi': last['rsi'],
-            'time': datetime.now().strftime('%H:%M')
+            'entry': entry,
+            'tp': tp,
+            'sl': sl
         }
     
-    def send_message(self, text):
+    def send_msg(self, text):
         token = os.getenv("BOT_TOKEN")
-        chat_id = os.getenv("CHAT_ID")
+        chat = os.getenv("CHAT_ID")
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
         try:
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
-        except Exception as e:
-            print(f"Error: {e}")
+            requests.post(url, json={"chat_id": chat, "text": text, "parse_mode": "HTML"})
+        except:
+            pass
     
     def run(self):
-        print("🚀 Bot ishga tushdi!")
-        self.send_message("🚀 <b>Crypto Signal Bot ishga tushdi!</b>")
+        print("Bot started!")
+        self.send_msg("Bot ishga tushdi!")
         
         while True:
-            try:
-                print(f"\n⏰ {datetime.now().strftime('%H:%M:%S')}")
-                for coin in self.all_coins:
-                    signal = self.analyze_coin(coin)
-                    if signal:                        msg = f"""
-🚨 <b>{signal['symbol']}</b>
-📊 <b>Signal:</b> {signal['signal']}
-🎯 <b>Direction:</b> {signal['direction']}
-
-💰 <b>Narx:</b> ${signal['price']:.6f}
-🎯 <b>Entry:</b> ${signal['entry_low']:.6f} - ${signal['entry_high']:.6f}
-
-📈 <b>TP1:</b> ${signal['tp1']:.6f}
-📈 <b>TP2:</b> ${signal['tp2']:.6f}
-📈 <b>TP3:</b> ${signal['tp3']:.6f}
-
-🛑 <b>SL:</b> ${signal['sl']:.6f}
-📉 <b>Trailing 5%:</b> ${signal['trailing_5']:.6f}
-
-⚡ <b>Leverage:</b> {signal['leverage']}x
-📊 <b>Volatility:</b> {signal['volatility']:.1f}%
-⏰ {signal['time']}
+            for coin in self.coins:
+                try:
+                    result = self.analyze(coin)
+                    if result:
+                        msg = f"""
+🚨 {result['coin']}
+{result['signal']}
+Price: ${result['price']}
+Entry: ${result['entry']}
+TP: ${result['tp']}
+SL: ${result['sl']}
 """
-                        self.send_message(msg)
+                        self.send_msg(msg)
                         time.sleep(1)
-                
-                print("⏳ 5 daqiqa kutish...")
-                time.sleep(300)
-            except Exception as e:
-                print(f"❌ Error: {e}")
-                time.sleep(60)
+                except:
+                    pass
+            
+            time.sleep(300)
 
 if __name__ == "__main__":
-    bot = AdvancedCryptoBot()
+    bot = CryptoBot()
     bot.run()
