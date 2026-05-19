@@ -101,7 +101,7 @@ class OptimizedBot:
     def analyze(self, symbol):
         df = self.get_data(symbol)
         if df is None or len(df) < 50:
-            return None
+           return None
         
         # Indicators
         df['rsi'] = ta.rsi(df['close'], length=14)
