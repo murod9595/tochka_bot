@@ -1,0 +1,5 @@
+.env
+__pycache__/
+*.pyc
+marketcoin.db
+venv/
