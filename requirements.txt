@@ -1,7 +1,8 @@
-flask==3.0.0
-ccxt
-pandas==2.1.4
-pandas-ta
+flask==2.3.0
+ccxt==4.1.0
+pandas==1.5.3
+pandas-ta==0.3.14b0
 requests==2.31.0
 python-dotenv==1.0.0
 apscheduler==3.10.4
+numpy==1.24.0
