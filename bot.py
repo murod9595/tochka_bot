@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template_string
+from flask import Flask
 import ccxt
 import requests
 import time
@@ -11,231 +11,179 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# CONFIG
+# SOZLAMALAR
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-LEVERAGE = int(os.getenv('LEVERAGE', 15))
-POSITION_SIZE = float(os.getenv('POSITION_SIZE', 50))
+LEVERAGE = os.getenv('LEVERAGE', '15')
+POSITION_SIZE = os.getenv('POSITION_SIZE', '50')
 
-# GLOBAL
-all_signals = []
-last_scan = None
+# GLOBAL O'ZGARUVCHILAR
+last_scan_time = None
 
-class SimpleBot:
-    def __init__(self):
-        self.exchange = ccxt.binance({'options': {'defaultType': 'future'}, 'timeout': 20000})
-        self.coins = [
-            "BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT",
-            "ADA/USDT", "DOGE/USDT", "MATIC/USDT", "DOT/USDT", "AVAX/USDT",
-            "LINK/USDT", "UNI/USDT", "ATOM/USDT", "LTC/USDT", "ETC/USDT",
-            "ARB/USDT", "OP/USDT", "SUI/USDT", "APT/USDT", "INJ/USDT",
-            "TIA/USDT", "SEI/USDT", "NEAR/USDT", "PEPE/USDT", "FLOKI/USDT",
-            "SHIB/USDT", "WIF/USDT", "BONK/USDT", "FET/USDT", "RNDR/USDT",
-            "IMX/USDT", "GALA/USDT", "SAND/USDT", "CRV/USDT", "LDO/USDT",
-            "STRK/USDT", "PYTH/USDT", "JUP/USDT", "FTM/USDT", "RUNE/USDT",
-            "NOT/USDT", "DOGS/USDT", "WIF/USDT", "BOME/USDT", "WEN/USDT"
-        ]
-    
-    def get_ohlcv(self, symbol, timeframe='15m', limit=50):
-        try:
-            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-            return [candle[4] for candle in ohlcv]
-        except:
-            return None
-    
-    def calculate_rsi(self, prices, period=14):
-        if len(prices) < period + 1:
-            return 50
-        gains = []
-        losses = []        for i in range(1, len(prices)):
-            diff = prices[i] - prices[i-1]
-            if diff > 0:
-                gains.append(diff)
-                losses.append(0)
-            else:
-                gains.append(0)
-                losses.append(abs(diff))
-        avg_gain = sum(gains[-period:]) / period
-        avg_loss = sum(losses[-period:]) / period
-        if avg_loss == 0:
-            return 100
-        rs = avg_gain / avg_loss
-        return 100 - (100 / (1 + rs))
-    
-    def calculate_ema(self, prices, period):
-        if len(prices) < period:
-            return prices[-1] if prices else 0
-        multiplier = 2 / (period + 1)
-        ema = sum(prices[:period]) / period
-        for price in prices[period:]:
-            ema = (price - ema) * multiplier + ema
-        return ema
-    
-    def analyze_multi_timeframe(self, symbol):
-        prices_15m = self.get_ohlcv(symbol, '15m')
-        prices_1h = self.get_ohlcv(symbol, '1h')
-        prices_4h = self.get_ohlcv(symbol, '4h')
+def send_telegram(message):
+    if not BOT_TOKEN or not CHAT_ID:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}, timeout=10)
+    except Exception as e:
+        print(f"Telegram Error: {e}")
+
+def get_rsi(prices, period=14):
+    if len(prices) < period + 1:
+        return 50
+    gains = 0
+    losses = 0
+    for i in range(1, period + 1):
+        diff = prices[-i] - prices[-i-1]
+        if diff > 0:
+            gains += diff
+        else:
+            losses -= diff
+    if losses == 0:
+        return 100
+    rs = gains / losses
+    return 100 - (100 / (1 + rs))
+
+def get_ema(prices, period):
+    if len(prices) < period:
+        return prices[-1]    multiplier = 2 / (period + 1)
+    ema = sum(prices[:period]) / period
+    for price in prices[period:]:
+        ema = (price - ema) * multiplier + ema
+    return ema
+
+def analyze_coin(symbol):
+    try:
+        exchange = ccxt.binance({'options': {'defaultType': 'future'}, 'timeout': 20000})
         
-        if not all([prices_15m, prices_1h, prices_4h]):
-            return None
+        # 15m, 1h, 4h ma'lumotlari
+        ohlcv_15m = exchange.fetch_ohlcv(symbol, '15m', limit=50)
+        ohlcv_1h = exchange.fetch_ohlcv(symbol, '1h', limit=50)
+        ohlcv_4h = exchange.fetch_ohlcv(symbol, '4h', limit=50)
         
-        current_price = prices_15m[-1]
-        rsi_15m = self.calculate_rsi(prices_15m)
-        rsi_1h = self.calculate_rsi(prices_1h)
+        closes_15m = [c[4] for c in ohlcv_15m]
+        closes_1h = [c[4] for c in ohlcv_1h]
+        closes_4h = [c[4] for c in ohlcv_4h]
         
-        ema_7 = self.calculate_ema(prices_15m, 7)
-        ema_25 = self.calculate_ema(prices_15m, 25)
-        ema_99 = self.calculate_ema(prices_15m, 99)
+        current_price = closes_15m[-1]
         
-        ema_4h = self.calculate_ema(prices_4h, 25)
+        # Indicators
+        rsi_15m = get_rsi(closes_15m)
+        rsi_1h = get_rsi(closes_1h)
         
-        # ATR Approximation
-        atr = (max(prices_15m[-20:]) - min(prices_15m[-20:])) * 0.5
+        ema_7 = get_ema(closes_15m, 7)
+        ema_25 = get_ema(closes_15m, 25)
+        ema_99 = get_ema(closes_15m, 99)
+        
+        # ATR (Approx)
+        high_20 = max([c[1] for c in ohlcv_15m[-20:]])
+        low_20 = min([c[2] for c in ohlcv_15m[-20:]])
+        atr = (high_20 - low_20) * 0.5
         
         score = 0
         
-        # RSI Score
-        if rsi_15m < 30:
-            score += 25        elif rsi_15m > 70:
-            score -= 25
-            
-        # Trend Score
-        if ema_7 > ema_25 > ema_99:
-            score += 30
-        elif ema_7 < ema_25 < ema_99:
-            score -= 30
-        elif ema_7 > ema_25:
-            score += 15
-        else:
-            score -= 15
-            
-        # 4H Trend
-        if current_price > ema_4h:
-            score += 20
-        else:
-            score -= 20
-            
-        # Signal Type
-        if score >= 50:
-            signal_type = "🔥 KUCHLI LONG" if score >= 70 else "🟢 LONG"
-            direction = "LONG"
-        elif score <= -50:
-            signal_type = "🔥 KUCHLI SHORT" if score <= -70 else "🔴 SHORT"
-            direction = "SHORT"
-        else:
-            return None
+        # RSI Logic
+        if rsi_15m < 30: score += 25
+        elif rsi_15m > 70: score -= 25
         
-        # TP/SL
-        if direction == "LONG":
+        # Trend Logic
+        if ema_7 > ema_25 > ema_99: score += 30
+        elif ema_7 < ema_25 < ema_99: score -= 30
+        elif ema_7 > ema_25: score += 15
+        else: score -= 15
+        
+        # 4H Trend
+        ema_4h = get_ema(closes_4h, 25)
+        if current_price > ema_4h: score += 20
+        else: score -= 20        
+        # Signal
+        if score >= 50:
+            direction = "LONG"
+            signal_emoji = "🔥 KUCHLI LONG" if score >= 70 else "🟢 LONG"
             tp1 = current_price * 1.03
             tp2 = current_price * 1.06
             tp3 = current_price * 1.10
             sl = current_price - (atr * 2)
             entry_low = current_price * 0.99
             entry_high = current_price * 0.995
-        else:
+        elif score <= -50:
+            direction = "SHORT"
+            signal_emoji = "🔥 KUCHLI SHORT" if score <= -70 else "🔴 SHORT"
             tp1 = current_price * 0.97
             tp2 = current_price * 0.94
             tp3 = current_price * 0.90
             sl = current_price + (atr * 2)
             entry_low = current_price * 1.005
             entry_high = current_price * 1.01
-        
-        expected_time = "1-3 soat" if rsi_15m < 30 or rsi_15m > 70 else "3-6 soat"
-        
-        return {
-            'symbol': symbol,
-            'signal': signal_type,            'direction': direction,
-            'price': current_price,
-            'entry_low': entry_low,
-            'entry_high': entry_high,
-            'tp1': tp1,
-            'tp2': tp2,
-            'tp3': tp3,
-            'sl': sl,
-            'rsi': rsi_15m,
-            'score': score,
-            'expected_time': expected_time,
-            'time': datetime.now().strftime('%H:%M')
-        }
-    
-    def send_telegram(self, message):
-        if not BOT_TOKEN or not CHAT_ID:
-            return False
-        try:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            requests.post(url, json={"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}, timeout=10)
-            return True
-        except:
-            return False
-    
-    def format_message(self, s):
-        return f"""
-{s['signal']} | 15m/1h/4h
-💎 {s['symbol']}
-🎯 {s['direction']}
+        else:
+            return None
+            
+        msg = f"""
+{signal_emoji} | 15m/1h/4h
+💎 <b>{symbol}</b>
+🎯 {direction}
 
-💰 Narx: ${s['price']:.6f}
-⏱️ Kutilayotgan: {s['expected_time']}
+💰 Narx: ${current_price:.6f}
+⏱️ Vaqt: {datetime.now().strftime('%H:%M')}
 
-📊 RSI: {s['rsi']:.1f} | Score: {s['score']}
+📊 RSI (15m): {rsi_15m:.1f} | Score: {score}
 
 🎯 ENTRY ZONE:
-${s['entry_low']:.6f} - ${s['entry_high']:.6f}
+${entry_low:.6f} - ${entry_high:.6f}
 
 📈 TAKE PROFIT:
-  TP1: ${s['tp1']:.6f} (+3%)
-  TP2: ${s['tp2']:.6f} (+6%)
-  TP3: ${s['tp3']:.6f} (+10%)
+  TP1: ${tp1:.6f} (+3%)
+  TP2: ${tp2:.6f} (+6%)
+  TP3: ${tp3:.6f} (+10%)
 
-🛑 STOP LOSS: ${s['sl']:.6f}
+🛑 STOP LOSS: ${sl:.6f}
 
 💵 Pozitsiya: ${POSITION_SIZE} | ⚡ {LEVERAGE}x
-
-⏰ {s['time']}
 """
-        def scan(self):
-        global all_signals, last_scan
-        print(f"\n🔍 Skanerlanmoqda...")
-        signals = []
-        
-        for coin in self.coins:
-            try:
-                signal = self.analyze_multi_timeframe(coin)
-                if signal and abs(signal['score']) >= 50:
-                    signals.append(signal)
-                    print(f"✅ {coin} - {signal['signal']}")
-                    self.send_telegram(self.format_message(signal))
-                    time.sleep(1)
-            except:
-                continue
-        
-        signals.sort(key=lambda x: abs(x['score']), reverse=True)
-        all_signals = signals[:15]
-        last_scan = datetime.now()
-        print(f"✅ {len(all_signals)} signal topildi!")
-        return all_signals
+        return msg
+    except Exception as e:
+        print(f"Error analyzing {symbol}: {e}")
+        return None
+def scan_market():
+    global last_scan_time
+    coins = [
+        "BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT",
+        "ADA/USDT", "DOGE/USDT", "MATIC/USDT", "DOT/USDT", "AVAX/USDT",
+        "LINK/USDT", "UNI/USDT", "ATOM/USDT", "LTC/USDT", "ETC/USDT",
+        "ARB/USDT", "OP/USDT", "SUI/USDT", "APT/USDT", "INJ/USDT",
+        "TIA/USDT", "SEI/USDT", "NEAR/USDT", "PEPE/USDT", "FLOKI/USDT",
+        "SHIB/USDT", "WIF/USDT", "BONK/USDT", "FET/USDT", "RNDR/USDT"
+    ]
+    
+    print("🔍 Skanerlash boshlandi...")
+    count = 0
+    
+    for coin in coins:
+        msg = analyze_coin(coin)
+        if msg:
+            print(f"✅ Signal: {coin}")
+            send_telegram(msg)
+            count += 1
+            time.sleep(1.5) # Telegram limit
+    
+    last_scan_time = datetime.now()
+    print(f"✅ {count} ta signal topildi!")
 
-bot = SimpleBot()
-
-def background_scan():
+def run_bot():
     while True:
         try:
-            bot.scan()
-            time.sleep(900)
+            scan_market()
+            time.sleep(300) # 5 daqiqa kutish
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"Loop Error: {e}")
             time.sleep(60)
 
 @app.route('/')
-def index():
-    return "<h1>🚀 Tochka Bot is running!</h1>"
-
-@app.route('/api/signals')
-def api_signals():
-    return jsonify({'signals': all_signals})
+def home():
+    return f"<h1>🚀 Tochka Bot Ishlamoqda!</h1><p>Oxirgi skan: {last_scan_time}</p>"
 
 if __name__ == "__main__":
-    threading.Thread(target=background_scan, daemon=True).start()
-    print("🚀 MarketCoin Bot ishga tushdi!")
+    threading.Thread(target=run_bot, daemon=True).start()
+    print("🚀 Bot Started!")
     app.run(host='0.0.0.0', port=5000, debug=False)
